@@ -1,0 +1,4 @@
+include SKILL.md CHANGELOG.md requirements-linux-cp312.lock
+recursive-include scripts *.py
+recursive-include references *.md
+recursive-include tests *.py
