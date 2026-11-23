@@ -1,0 +1,45 @@
+name: Standalone wheel CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheel-tests:
+    runs-on: ubuntu-24.04
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      PYTHONPATH: ''
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      - name: Install hash-locked dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/data-audit-venv"
+          "$RUNNER_TEMP/data-audit-venv/bin/python" -m pip install \
+            --require-hashes --only-binary=:all: -r requirements-linux-cp312.lock
+
+      - name: Build and install the standalone wheel
+        run: |
+          audit_python="$RUNNER_TEMP/data-audit-venv/bin/python"
+          wheel_dir="$RUNNER_TEMP/data-audit-wheels"
+          "$audit_python" -m pip wheel --no-index --no-deps --no-build-isolation --wheel-dir "$wheel_dir" .
+          "$audit_python" -m pip install --no-index --no-deps "$wheel_dir"/citrus_data_audit-*.whl
+          "$audit_python" -m pip check
+
+      - name: Test the installed wheel outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          audit_python="$RUNNER_TEMP/data-audit-venv/bin/python"
+          "$audit_python" -I -c 'import sysconfig; from pathlib import Path; import citrus_audit; assert Path(citrus_audit.__file__).resolve().is_relative_to(Path(sysconfig.get_path("purelib")).resolve())'
+          "$audit_python" -I -m pytest -q --import-mode=importlib "$GITHUB_WORKSPACE/tests"
