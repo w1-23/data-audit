@@ -149,6 +149,10 @@ def parse_plan(raw):
         method = comparison["method"]
         fields = {"method", "left", "right", "units", "right_factor_to_left",
                   "absolute_tolerance", "relative_tolerance"}
+        if method == "sample_alignment":
+            fields.add("numeric_relations")
+            if type(comparison.get("numeric_relations", False)) is not bool:
+                raise ValueError("numeric_relations must be a boolean")
         if method == "window_search":
             fields |= {"window", "max_windows", "max_pairs", "seed"}
         if set(comparison) - fields:
@@ -419,6 +423,44 @@ def _compare_window_search(receipt, binding, sides, found):
     receipt["status"] = "partial" if limit_reasons else "complete"
 
 
+def _aligned_numeric_relations(left, right, lr, rr, lc, rc, binding, coverage):
+    from .detectors.paperconan import METHOD_VERSION, SOURCE, exact_relation
+
+    factor = Fraction(binding['right_factor_to_left'])
+    total = (coverage['matched_unique_keys'] + coverage['left_unmatched']
+             + coverage['right_unmatched'] + coverage['left_nonunique_or_empty']
+             + coverage['right_nonunique_or_empty'])
+    result = []
+    for left_col, right_col in zip(lc, rc):
+        finite = [(left_row, right_row, left.values[left_row][left_col], right.values[right_row][right_col])
+                  for left_row, right_row in zip(lr, rr)
+                  if left.values[left_row][left_col] is not None and right.values[right_row][right_col] is not None]
+        covered = len(finite)
+        sufficient = covered >= 3 and covered * 5 >= total * 4
+        relation, constant = None, None
+        state = 'not_applicable'
+        if sufficient:
+            relation, constant = exact_relation([(a, b * factor) for _, _, a, b in finite])
+            state = 'checked_with_findings' if relation else 'checked_no_findings'
+            if coverage['limit_reasons'] or covered < total:
+                state = 'partial_coverage'
+        row = {'method_version': METHOD_VERSION, 'upstream': SOURCE, 'relation': relation,
+               'coverage': {'finite_pairs': covered, 'candidate_keys_or_rows': total}, 'state': state}
+        if not sufficient:
+            row['reason'] = 'paired_coverage_below_0.8_or_n_lt_3'
+        left_positions = [pair[0] for pair in finite]
+        right_positions = [pair[1] for pair in finite]
+        row['locations'] = [_location(left, left_positions, [left_col]), _location(right, right_positions, [right_col])]
+        if relation:
+            if constant is not None:
+                row['constant'] = _rational(constant)
+            row['representative_pairs'] = [
+                {'left_row': left.row_numbers[left_row], 'right_row': right.row_numbers[right_row],
+                 'left': _rational(a), 'right': _rational(b)} for left_row, right_row, a, b in finite[:12]]
+        result.append(row)
+    return result
+
+
 def compare_bound(plan, snapshots):
     results = []
     for binding in plan["comparisons"]:
@@ -493,4 +535,7 @@ def compare_bound(plan, snapshots):
                        evidence={"evaluated_pairs_sha256": pairs_digest, "cells_differing": differences,
                                  "finite_rectangle_match": method == "finite_rectangle" and bool(cell_pairs)
                                      and not differences and len({x for x, _ in cell_pairs}) >= 3})
+        if binding.get("numeric_relations"):
+            receipt['evidence']['numeric_relations'] = _aligned_numeric_relations(
+                left, right, lr, rr, lc, rc, binding, receipt['coverage'])
     return results

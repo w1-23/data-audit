@@ -82,6 +82,22 @@ fresh cache.
   An undeclared `ND`, `<LOD`, `BLQ`, `NA`, `#N/A` or similar value is reported as
   “meaning to confirm”; it is never silently converted to zero, missing or LOD/2.
 
+## Comparison of saved regions
+
+When the user requests a comparison across sheets or files, pass the selected
+snapshots to `compare_snapshots` with a `sample_alignment` binding that sets
+`numeric_relations: true`. Bind both real sheet/region identities, measurement columns, unique sample keys
+and known units. No workbook is reopened. Matching uses the declared keys, so
+physical row order need not agree. Missing and non-unique keys are counted and
+never paired by position.
+
+Read `evidence.numeric_relations` for exact equality, constant offset and
+constant ratio on the common scale. The retained receipt includes original
+sheet coordinates, original values before declared unit conversion, pair
+coverage and skipped reasons. Tolerance in the older cell comparison cannot turn
+an approximate relation into an exact lead. The default one-sheet review does
+not look for cross-source relations.
+
 ## Compatibility and snapshots
 
 The pre-3.1 `review` CLI/API, `review_bytes`, `audit_table`, snapshot schema

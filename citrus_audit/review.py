@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 from .api import AuditSnapshot, SCHEMA_VERSION, _formula_coordinates, audit_table
 from .data_audit_rules import RULES
 from .detectors import PAPERCONAN_CHECKS, GENG_CHECKS, detect_geng, detect_paperconan
+from .detectors.paperconan import METHOD_VERSION as PAPERCONAN_METHOD_VERSION
 from .readers import open_xlsx_readonly, read_regions, read_tables
 from .reporting import dumps
 
@@ -216,15 +217,20 @@ def _detector_checklist(selected, paper_receipt, geng_receipt, paper_findings, g
             reason = ("no column pair met the minimum paired coverage" if not tested
                       else f"{skipped} column pair(s) below minimum paired coverage" if skipped else "")
             rows.append(_checklist_row(check, state, tested=tested, skipped=skipped,
-                                       reason=reason, method_version="paperconan-adapt/1"))
+                                       reason=reason, method_version=PAPERCONAN_METHOD_VERSION))
         elif check in row_checks and row_pairs is not None:
             tested, skipped = _paper_pair_rollup(row_pairs)
             state = "checked_with_findings" if counts.get(check) else (
                 "checked_no_findings" if tested else "not_applicable")
             reason = ("no row pair met the minimum paired coverage" if not tested
                       else f"{skipped} row pair(s) below minimum paired coverage" if skipped else "")
+            limits = paper_receipt["coverage"]
+            untested = limits["row_pairs_total"] - limits["row_pairs"]
+            if untested:
+                state, reason = "partial_coverage", "row_pair_budget"
+                skipped += untested
             rows.append(_checklist_row(check, state, tested=tested, skipped=skipped,
-                                       reason=reason, method_version="paperconan-adapt/1"))
+                                       reason=reason, method_version=PAPERCONAN_METHOD_VERSION))
         elif check in paper_receipt and isinstance(paper_receipt[check], dict):
             receipt = paper_receipt[check]
             state = receipt.get("state", "executed")
@@ -237,7 +243,7 @@ def _detector_checklist(selected, paper_receipt, geng_receipt, paper_findings, g
             else:
                 state = "checked_with_findings" if counts.get(check) else "checked_no_findings"
             rows.append(_checklist_row(check, state, tested=tested, reason=reason,
-                                       method_version="paperconan-adapt/1"))
+                                       method_version=PAPERCONAN_METHOD_VERSION))
         elif check in geng_receipt and isinstance(geng_receipt[check], dict):
             receipt = geng_receipt[check]
             states = []

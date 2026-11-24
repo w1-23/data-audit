@@ -15,20 +15,20 @@ from __future__ import annotations
 
 from collections import defaultdict
 import re
-from fractions import Fraction
 import json
+from itertools import combinations, islice
 from typing import Any
 
 from openpyxl.utils import get_column_letter
 
 from ..integrity import _number, _rational
 
-METHOD_VERSION = "paperconan-adapt/1"
+METHOD_VERSION = "paperconan-adapt/2"
 SOURCE = {
     "repository": "https://github.com/zixixr/paperconan",
     "commit": "8d116455b23e858651250d8ed23ba41c1a87ab0d",
     "license": "MIT",
-    "adaptation": "bounded table-only exact detectors; no scanner or risk score",
+    "adaptation": "bounded exact table and explicitly aligned snapshot comparisons",
 }
 CHECKS = (
     "pc_identical_columns",
@@ -41,6 +41,8 @@ CHECKS = (
     "pc_shared_decimal_tail",
 )
 CORE_CHECKS = frozenset(CHECKS[:7])
+_COLUMN_CHECKS = frozenset(CHECKS[:3])
+_ROW_CHECKS = frozenset(CHECKS[3:6])
 _MAX_PAIR_ROWS = 20_000
 _MAX_COLUMNS = 80
 _MAX_ROW_PAIRS = 5_000
@@ -94,8 +96,7 @@ def _pair_evidence(table, left: int, right: int, direction: str, rows: list[int]
     if direction == "columns":
         ranges = []
         for column in (left, right):
-            selected = [row for row in rows if row in {entry[0] for entry in pairs}]
-            ranges.append(_a1_range(table, selected, [column]))
+            ranges.append(_a1_range(table, rows, [column]))
     else:
         ranges = [_a1_range(table, [row], list(table.column_numbers)) for row in (left, right)]
     return {
@@ -104,7 +105,7 @@ def _pair_evidence(table, left: int, right: int, direction: str, rows: list[int]
         "left": left if direction == "rows" else table.columns[table.column_numbers.index(left)],
         "right": right if direction == "rows" else table.columns[table.column_numbers.index(right)],
         "paired": len(pairs),
-        "pairs": [{"left_row": left if direction == "rows" else row,
+        "representative_pairs": [{"left_row": left if direction == "rows" else row,
                    "right_row": right if direction == "rows" else row,
                    "left": str(a), "right": str(b)}
                   for row, _, a, b in pairs[:12]],
@@ -127,70 +128,76 @@ def _finding(table, check, detail, *, row="", column="", severity="review", evid
     }
 
 
-def _same_column_relation(table, values, left, right, rows):
-    common = [(row, values[row][left][0], values[row][right][0])
-              for row in rows if left in values[row] and right in values[row]]
+def exact_relation(pairs):
+    """Classify aligned finite pairs on a common scale using exact rationals."""
+    if len(pairs) < 3:
+        return None, None
+    if all(left == right for left, right in pairs):
+        return "identical", None
+    if len({left for left, _ in pairs}) < 2 or len({right for _, right in pairs}) < 2:
+        return None, None
+    offsets = {right - left for left, right in pairs}
+    if len(offsets) == 1:
+        return "constant_offset", offsets.pop()
+    if all(left for left, _ in pairs):
+        ratios = {right / left for left, right in pairs}
+        if len(ratios) == 1:
+            return "constant_ratio", ratios.pop()
+    return None, None
+
+
+def _relation_finding(table, direction, pairs, coordinates, *, left, right, rows, selected):
+    relation, constant = exact_relation(pairs)
+    check = f"pc_{relation}_{direction}"
+    if check not in selected:
+        return None
+    evidence = _pair_evidence(table, left, right, direction, rows, coordinates)
+    evidence.update(relation=relation, pairs=len(pairs))
+    if direction == "columns":
+        left_label, right_label = evidence['left'], evidence['right']
+        row, column = "", right
+    else:
+        left_label, right_label = f"第 {left} 行", f"第 {right} 行"
+        row, column = right, ""
+    if constant is not None:
+        evidence['constant'] = _rational(constant)
+    description = {
+        "identical": "数值完全相同",
+        "constant_offset": f"逐项相差常数 {evidence.get('constant')}",
+        "constant_ratio": f"保持同一比值 {evidence.get('constant')}",
+    }[relation]
+    return _finding(table, check,
+        f"{left_label} 与 {right_label} 在 {len(pairs)} 个共同测量位置上{description}。"
+        "请核对公式、单位换算或合法复用，不能据此判定复制方向。",
+        row=row, column=column, evidence=evidence)
+
+
+def _same_column_relation(table, values, left, right, rows, selected):
+    common = [row for row in rows if left in values[row] and right in values[row]]
     nonempty = sum(1 for row in rows if left in values[row] or right in values[row])
+    receipt = {"left": left, "right": right, "tested": len(common)}
     if len(common) < 3 or len(common) / max(1, nonempty) < 0.8:
-        return None, {"left": left, "right": right, "tested": len(common),
-                      "reason": "paired_coverage_below_0.8_or_n_lt_3"}
-    diffs = [b - a for _, a, b in common]
-    ratios = [] if any(a == 0 for _, a, _ in common) else [b / a for _, a, b in common]
-    originals = {row: (values[row][left][1], values[row][right][1]) for row, _, _ in common}
-    pairs = [(row, row, originals[row][0], originals[row][1]) for row, _, _ in common]
-    evidence = _pair_evidence(table, left, right, "columns", rows, pairs)
-    left_name = table.columns[table.column_numbers.index(left)]
-    right_name = table.columns[table.column_numbers.index(right)]
-    if all(a == b for _, a, b in common):
-        evidence.update({"relation": "identical", "pairs": len(common)})
-        return _finding(table, "pc_identical_columns",
-                        f"{left_name} 与 {right_name} 在 {len(common)} 个共同有效行上数值完全相同；镜像列、派生列或合法复用也可能产生。",
-                        column=right, evidence=evidence), None
-    if len({b - a for _, a, b in common}) == 1 and len({b for _, _, b in common}) != 1:
-        delta = diffs[0]
-        evidence.update({"relation": "constant_offset", "constant": _rational(delta), "pairs": len(common)})
-        return _finding(table, "pc_constant_offset_columns",
-                        f"{left_name} 与 {right_name} 在 {len(common)} 个共同有效行上逐项相差常数 {_rational(delta)}；需核对公式、单位换算或复制关系。",
-                        column=right, evidence=evidence), None
-    if ratios and len(set(ratios)) == 1 and ratios[0] != 1:
-        ratio = ratios[0]
-        evidence.update({"relation": "constant_ratio", "constant": _rational(ratio), "pairs": len(common)})
-        return _finding(table, "pc_constant_ratio_columns",
-                        f"{left_name} 与 {right_name} 在 {len(common)} 个共同有效行上保持同一比值 {_rational(ratio)}；需核对比例换算、归一化或复制关系。",
-                        column=right, evidence=evidence), None
-    return None, {"left": left, "right": right, "tested": len(common), "reason": "no_exact_copy_relation"}
+        receipt["reason"] = "paired_coverage_below_0.8_or_n_lt_3"
+        return None, receipt
+    cells = [(row, values[row][left], values[row][right]) for row in common]
+    finding = _relation_finding(table, "columns", [(a[0], b[0]) for _, a, b in cells],
+        [(row, row, a[1], b[1]) for row, a, b in cells], left=left, right=right,
+        rows=common, selected=selected)
+    return finding, receipt
 
 
-def _same_row_relation(table, values, upper, lower, columns, nums_by_row):
+def _same_row_relation(table, values, upper, lower, columns, selected):
     common = [column for column in columns if column in values[upper] and column in values[lower]]
     nonempty = sum(1 for column in columns if column in values[upper] or column in values[lower])
+    receipt = {"upper": upper, "lower": lower, "tested": len(common)}
     if len(common) < 3 or len(common) / max(1, nonempty) < 0.8:
-        return None, {"upper": upper, "lower": lower, "tested": len(common),
-                      "reason": "paired_coverage_below_0.8_or_n_lt_3"}
-    upper_values = [values[upper][column][0] for column in common]
-    lower_values = [values[lower][column][0] for column in common]
-    diffs = [b - a for a, b in zip(upper_values, lower_values)]
-    ratios = [] if any(a == 0 for a in upper_values) else [b / a for a, b in zip(upper_values, lower_values)]
-    pairs = [(upper, lower, values[upper][column][1], values[lower][column][1]) for column in common]
-    evidence = _pair_evidence(table, upper, lower, "rows", list(table.row_numbers), pairs)
-    if all(a == b for a, b in zip(upper_values, lower_values)):
-        evidence.update({"relation": "identical", "pairs": len(common)})
-        return _finding(table, "pc_identical_rows",
-                        f"第 {upper} 行与第 {lower} 行在 {len(common)} 个共同测量列上数值完全相同；合法重复测量或共享对照也可能产生。",
-                        row=lower, evidence=evidence), None
-    if len(set(diffs)) == 1 and len(set(lower_values)) != 1:
-        delta = diffs[0]
-        evidence.update({"relation": "constant_offset", "constant": _rational(delta), "pairs": len(common)})
-        return _finding(table, "pc_constant_offset_rows",
-                        f"第 {upper} 行与第 {lower} 行在 {len(common)} 个共同测量列上逐项相差常数 {_rational(delta)}；需核对公式、单位或复制关系。",
-                        row=lower, evidence=evidence), None
-    if ratios and len(set(ratios)) == 1 and ratios[0] != 1:
-        ratio = ratios[0]
-        evidence.update({"relation": "constant_ratio", "constant": _rational(ratio), "pairs": len(common)})
-        return _finding(table, "pc_constant_ratio_rows",
-                        f"第 {upper} 行与第 {lower} 行在 {len(common)} 个共同测量列上保持同一比值 {_rational(ratio)}；需核对换算或复制关系。",
-                        row=lower, evidence=evidence), None
-    return None, {"upper": upper, "lower": lower, "tested": len(common), "reason": "no_exact_copy_relation"}
+        receipt["reason"] = "paired_coverage_below_0.8_or_n_lt_3"
+        return None, receipt
+    cells = [(values[upper][column], values[lower][column]) for column in common]
+    finding = _relation_finding(table, "rows", [(a[0], b[0]) for a, b in cells],
+        [(upper, lower, a[1], b[1]) for a, b in cells], left=upper, right=lower,
+        rows=[upper, lower], selected=selected)
+    return finding, receipt
 
 
 def _repeated_blocks(table, values, rows, columns):
@@ -271,6 +278,8 @@ def _shared_tail(table, rows, columns):
 def detect_table(table, *, checks=None, field_roles=None):
     checks = set(checks if checks is not None else CHECKS)
     selected = checks & set(CHECKS)
+    if not selected:
+        return [], {}
     rows, columns, names, values, coverage, eligible = _numeric_matrix(table, field_roles)
     findings = []
     receipts = {}
@@ -278,32 +287,25 @@ def detect_table(table, *, checks=None, field_roles=None):
         found, receipt = _shared_tail(table, rows, columns)
         findings.extend(found)
         receipts["pc_shared_decimal_tail"] = receipt
-    column_receipts = []
-    for left_index, left in enumerate(eligible):
-        for right in eligible[left_index + 1:]:
-            finding, receipt = _same_column_relation(table, values, left, right, rows)
-            column_receipts.append(receipt)
-            if finding and finding["check"] in selected:
+    if selected & _COLUMN_CHECKS:
+        receipts["_column_pairs"] = []
+        for left, right in combinations(eligible, 2):
+            finding, receipt = _same_column_relation(table, values, left, right, rows, selected)
+            receipts["_column_pairs"].append(receipt)
+            if finding:
                 findings.append(finding)
-    receipts["_column_pairs"] = column_receipts
-    nums_by_row = {row: [column for column in eligible if column in values[row]] for row in rows}
-    row_pairs = 0
-    row_receipts = []
-    for upper_index, upper in enumerate(rows):
-        if len(nums_by_row[upper]) < 3:
-            continue
-        for lower in rows[upper_index + 1:]:
-            if row_pairs >= _MAX_ROW_PAIRS:
-                break
-            if len(nums_by_row[lower]) < 3:
-                continue
-            row_pairs += 1
-            finding, receipt = _same_row_relation(table, values, upper, lower,
-                                                  eligible, nums_by_row)
-            row_receipts.append(receipt)
-            if finding and finding["check"] in selected:
+    row_pair_count = 0
+    row_pairs_total = 0
+    if selected & _ROW_CHECKS:
+        receipts["_row_pairs"] = []
+        eligible_rows = [row for row in rows if sum(column in values[row] for column in eligible) >= 3]
+        row_pairs_total = len(eligible_rows) * (len(eligible_rows) - 1) // 2
+        for upper, lower in islice(combinations(eligible_rows, 2), _MAX_ROW_PAIRS):
+            finding, receipt = _same_row_relation(table, values, upper, lower, eligible, selected)
+            receipts["_row_pairs"].append(receipt)
+            if finding:
                 findings.append(finding)
-    receipts["_row_pairs"] = row_receipts
+        row_pair_count = len(receipts["_row_pairs"])
     if "pc_repeated_blocks" in selected:
         found, receipt = _repeated_blocks(table, values, rows, eligible)
         findings.extend(found)
@@ -317,6 +319,6 @@ def detect_table(table, *, checks=None, field_roles=None):
     receipts["eligible_columns"] = [names[list(table.column_numbers).index(c)] for c in eligible]
     receipts["coverage"] = {"rows": len(rows), "columns": len(columns),
                             "eligible_columns": receipts["eligible_columns"],
-                            "row_pairs": row_pairs,
+                            "row_pairs": row_pair_count, "row_pairs_total": row_pairs_total,
                             "method_version": METHOD_VERSION, "source": SOURCE}
     return findings, receipts

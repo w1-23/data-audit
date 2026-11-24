@@ -1,5 +1,5 @@
 """Independent Citrus data audit support library."""
-__version__ = '3.2.0'
+__version__ = '3.2.1'
 from .envelope import TableEnvelope
 from .api import AuditSnapshot, audit_table, review_bytes, export_workbook
 from .review import review_sheet

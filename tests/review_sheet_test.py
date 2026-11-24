@@ -333,3 +333,68 @@ def test_explicit_legacy_check_without_prerequisite_is_partial():
     assert snapshot.report["status"] == "partial"
     assert any(gap["check"] == "out_of_range" and gap["state"] == "not_applicable"
                for gap in snapshot.report["review"]["coverage_gaps"])
+
+
+def test_unselected_paperconan_relation_does_not_run(monkeypatch):
+    from citrus_audit.detectors import paperconan
+
+    def unexpected_relation(*args, **kwargs):
+        raise AssertionError("unselected PaperConan relation was evaluated")
+
+    monkeypatch.setattr(paperconan, "exact_relation", unexpected_relation)
+    region = REGIONS[0]
+    snapshot = review_sheet(_golden_workbook(), "golden.xlsx", regions=[region],
+                            requested_checks=["duplicate_row"])
+    assert snapshot.report["review"]["selected_checks"] == ["duplicate_row"]
+    assert "paperconan" not in snapshot.report["review"]["detector_sources"]
+
+
+def test_row_pair_limit_marks_selected_check_partial(monkeypatch):
+    from citrus_audit.detectors import paperconan
+
+    monkeypatch.setattr(paperconan, "_MAX_ROW_PAIRS", 1)
+    snapshot = review_sheet(_golden_workbook(), "golden.xlsx", regions=[REGIONS[0]],
+                            field_roles={"value_columns": ["raw", "converted", "shifted"]},
+                            requested_checks=["pc_constant_offset_rows"])
+    report = snapshot.report
+    assert report["status"] == "partial"
+    gap = report["review"]["coverage_gaps"][0]
+    assert gap["state"] == "partial_coverage" and gap["reason"] == "row_pair_budget"
+    checked = [row for row in report["tables"][0]["result"]["data"]["checklist"]
+               if row["check"] == "pc_constant_offset_rows"]
+    assert checked[0]["tested"] == 1 and checked[0]["skipped"] == 27
+
+
+def test_compare_saved_sheets_without_scanning_other_sheets():
+    from citrus_audit import compare_snapshots
+
+    workbook = Workbook()
+    left = workbook.active
+    left.title = "Original"
+    right = workbook.create_sheet("Shifted")
+    other = workbook.create_sheet("Unreviewed")
+    for item in (("id", "value"), ("a", 2), ("b", 4), ("c", 7), ("d", 13)):
+        left.append(item)
+    for item in (("code", "measure"), ("c", 17), ("a", 12), ("d", 23), ("b", 14)):
+        right.append(item)
+    other.append(("code", "measure"))
+    other.append(("c", 999))
+    source = BytesIO()
+    workbook.save(source)
+    snapshot = review_sheet(source.getvalue(), "two.xlsx", requested_checks=[], regions=[
+        {"sheet": "Original", "bounds": "A1:B5", "header_rows": [1], "region_id": "left"},
+        {"sheet": "Shifted", "bounds": "A1:B5", "header_rows": [1], "region_id": "right"},
+    ])
+    plan = {"schema": "audit-plan/1", "mode": "research_integrity", "comparisons": [{
+        "method": "sample_alignment", "numeric_relations": True, "units": ["mg", "mg"],
+        "left": {"file_index": 0, "sheet": "Original", "region_id": "left", "columns": ["value"], "key_columns": ["id"]},
+        "right": {"file_index": 0, "sheet": "Shifted", "region_id": "right", "columns": ["measure"], "key_columns": ["code"]},
+    }]}
+    receipt = compare_snapshots([snapshot], plan)
+    assert receipt["status"] == "complete"
+    assert [entry["table"]["sheet"] for entry in snapshot.report["tables"]] == ["Original", "Shifted"]
+    relation = receipt["comparisons"][0]["evidence"]["numeric_relations"][0]
+    assert relation["relation"] == "constant_offset" and relation["constant"] == "10"
+    assert [(loc["sheet"], loc["cells"][0]) for loc in relation["locations"]] == [
+        ("Original", ["B2"]), ("Shifted", ["B3"]),
+    ]
