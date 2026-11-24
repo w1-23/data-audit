@@ -12,7 +12,7 @@ The [entry-by-entry migration map](references/migration.md) names every baseline
 
 The Skill operates on explicitly supplied files and saved snapshots. It provides a bounded first reply, a stable full JSON report, and one consolidated annotated workbook from saved findings. Coverage and failure receipts keep unreviewed scopes visible. Numerical relationships are review leads and require scientific context. [Skill entry](SKILL.md) · [Usage and scope](references/usage.md).
 
-The [standalone CI workflow](.github/workflows/ci.yml) verifies the hash-locked Linux CPython 3.12 dependency set, builds and installs the wheel, and runs the full test suite against that installation. The standalone acceptance suite has 81 tests. Host installation and removal, second-host workflow execution, and final Worker acceptance remain `NOT_RUN`. [Standalone evidence and gaps](references/verification.md) · [Host integration](references/host-integration.md).
+The [standalone CI workflow](.github/workflows/ci.yml) verifies the hash-locked Linux CPython 3.12 dependency set, builds and installs the wheel, and runs the full test suite against that installation. The standalone acceptance suite has 100 tests. Host installation and removal, second-host workflow execution, and final Worker acceptance remain `NOT_RUN`. [Standalone evidence and gaps](references/verification.md) · [Host integration](references/host-integration.md).
 
 
 ## 3.1 default execution organization
@@ -28,6 +28,8 @@ they are not the new default orchestrator. New table reviews start at
 | Decimal-tail concentration | PaperConan-adapted lexical-token detector, on demand | `decimal_ending_concentration` and integrity method remain compatible | Source-token precondition tests |
 | Last digit, Benford, GRIM, decimal consistency | Geng-adapted optional checks with explicit prerequisites and no risk score | Not part of `balanced` | Scoped specialist tests |
 | SPRITE / image duplication | `NOT_RUN`: no pinned runtime and no separate authorized image scope in this package | No silent substitute | Explicit coverage gap |
+| Reported n/sum/mean/SD/SE | Explicit raw→reported binding; exact count and rounding-interval comparison | `compare_reported_summaries` and legacy integer-summary rules remain compatible | `reported_stats_test.py` and cross-table binding test |
+| Reported P values | Pure-Python z/t/χ²/F and raw Welch/Student/paired/ANOVA/Pearson/contingency; inequalities and Holm/BH | `audit_p_values` explicit family adjustment | Distribution-reference and binding tests |
 | Annotated original copy | One `审查结果` sheet; one XLSX; no debug appendices | `presentation="legacy"` | Six-region SHA/formula/cache/XML fixture |
 
 A new task must not run the old and new orchestrators in sequence. A relationship

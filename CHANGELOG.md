@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.0
+
+- Add `reported_summaries=` and `reported_p_values=` to `review_sheet`, using explicit `region_id`/`sheet` + absolute row/column bindings.
+- Add portable summary recomputation for n, sum, mean, sample SD and SE, with rounding-interval comparison and explicit sample-unit/unit/SD declarations.
+- Add pure-Python P-value recomputation for reported z/t/χ²/F statistics and raw Welch/Student/paired t, one-way ANOVA, Pearson and contingency tests; support `P<0.001` inequalities and Holm/Benjamini-Hochberg adjustment.
+- Keep summary/P work out of `balanced`, `duplicates` and unrelated `requested_checks`; unresolved explicit bindings report coverage gaps and `partial`.
+- Preserve cross-file/cross-sheet comparison through the explicit `compare_snapshots` API. SPRITE and image duplication remain `NOT_RUN` until pinned runtimes and an authorized image scope are supplied.
+
 ## 3.1.0
 
 - Add `review_sheet()` as the balanced, explicit-scope default review path.

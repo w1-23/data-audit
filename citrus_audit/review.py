@@ -268,6 +268,8 @@ def review_sheet(data: bytes, name: str, *, sheet_scope: str = "",
                  regions: Sequence[Mapping[str, Any]] | None = None,
                  field_roles: Mapping[str, Any] | None = None,
                  requested_checks: Sequence[str] | None = None,
+                 reported_summaries: Sequence[Mapping[str, Any]] | None = None,
+                 reported_p_values: Sequence[Mapping[str, Any]] | None = None,
                  profile: str = "balanced", header_row: int = 1,
                  header_rows: Sequence[int] | None = None) -> AuditSnapshot:
     """Review one explicitly scoped workbook/table and freeze a portable snapshot."""
@@ -359,6 +361,17 @@ def review_sheet(data: bytes, name: str, *, sheet_scope: str = "",
         else:
             result["status"] = "complete"
         entries.append({"table": table.to_dict(), "result": result})
+    reported = None
+    if reported_summaries is not None or reported_p_values is not None:
+        from .reported_stats import apply_reported_bindings
+        if entries:
+            reported = apply_reported_bindings(entries, summaries=reported_summaries,
+                                               p_values=reported_p_values)
+            all_gaps.extend(reported["coverage_gaps"])
+        else:
+            reported = {"review": {"summaries": {"checks": []}, "p_values": {"checks": []}},
+                        "coverage_gaps": [{"check": "reported_statistics", "state": "not_applicable",
+                                           "reason": "no reviewable tables"}], "partial": True}
     if entries and Path(name).suffix.lower() in {".xlsx", ".xlsm"}:
         with closing(open_xlsx_readonly(data, name, data_only=False)) as workbook:
             for table, entry in zip(tables, entries):
@@ -367,7 +380,7 @@ def review_sheet(data: bytes, name: str, *, sheet_scope: str = "",
         "version": SCHEMA_VERSION,
         "source_sha256": hashlib.sha256(data).hexdigest(),
         "source_name": name,
-        "status": "error" if not entries else "partial" if errors or any(
+        "status": "error" if not entries else "partial" if errors or (reported and reported.get("partial")) or any(
             entry["result"]["status"] == "partial" for entry in entries) else "complete",
         "tables": entries,
         "errors": errors,
@@ -379,6 +392,8 @@ def review_sheet(data: bytes, name: str, *, sheet_scope: str = "",
             "required_checks": sorted(required_checks),
             "detector_sources": detector_sources,
             "coverage_gaps": all_gaps,
+            "reported_stats": (reported["review"] if reported else
+                               {"summaries": {"checks": []}, "p_values": {"checks": []}}),
             "claims": [
                 "Review covers only the recorded regions and executed checks.",
                 "Relationships and distribution deviations are review leads, not proof of misconduct.",

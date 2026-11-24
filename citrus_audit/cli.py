@@ -150,11 +150,14 @@ def _execute(args):
         regions = options.pop('regions', None)
         roles = options.pop('field_roles', options)
         requested = options.pop('requested_checks', args.checks)
+        summaries = options.pop('reported_summaries', None)
+        p_values = options.pop('reported_p_values', None)
         if options:
-            raise UserError('unknown_options', 'Only regions, field_roles and requested_checks are accepted.')
+            raise UserError('unknown_options', 'Only regions, field_roles, requested_checks, reported_summaries and reported_p_values are accepted.')
         snapshot = review_sheet(_bounded_read(args.input, MAX_INPUT_BYTES), args.input.name,
                                 sheet_scope=args.sheet, regions=regions,
                                 field_roles=roles, requested_checks=requested,
+                                reported_summaries=summaries, reported_p_values=p_values,
                                 profile=args.profile, header_row=args.header_row)
         payload = snapshot.to_dict()
         _write_json(args.snapshot, payload)

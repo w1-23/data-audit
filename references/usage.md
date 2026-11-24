@@ -104,3 +104,35 @@ payload = snapshot.to_dict()                 # private JSON persistence
 restored = AuditSnapshot.from_dict(payload)
 blob, receipt = export_workbook(restored)    # one annotated XLSX
 ```
+
+## Explicit reported summaries and P values
+
+```python
+snapshot = review_sheet(
+    data, "input.xlsx", regions=regions, field_roles=roles,
+    reported_summaries=[{
+        "raw": {"region_id": "raw", "column": "value", "rows": [4, 5, 6, 7, 8]},
+        "reported": {"region_id": "summary", "row": 3,
+                     "columns": {"n": "n", "sum": "sum", "mean": "mean", "sd": "sd", "se": "se"}},
+        "decimals": {"sum": 0, "mean": 2, "sd": 3, "se": 3},
+        "sample_unit_confirmed": True,
+        "same_units_confirmed": True,
+        "sd_kind": "sample",
+    }],
+    reported_p_values=[{
+        "mode": "statistic", "distribution": "t", "df": 18, "tails": "two",
+        "statistic": {"region_id": "stats", "row": 12, "column": "t"},
+        "reported_p": {"region_id": "stats", "row": 12, "column": "p", "decimals": 3},
+        "location": {"region_id": "stats", "row": 12, "column": "p"},
+    }],
+)
+```
+
+For raw-sample P values use `mode="samples"` and either literal `groups` or
+column selectors such as
+`{"region_id": "raw", "column": "value", "rows": [4, 5, 6, 7, 8]}`. Supported
+tests are `welch_t`, `student_t`, `paired_t`, `one_way_anova`, `pearson` and
+`chi2_contingency`; set `correction=True` only when Yates correction is the
+declared design. `P<0.001` and `P<=0.05` remain inequalities. Unresolved
+bindings are reported as coverage gaps and make the review `partial`; a real
+finding does not by itself make execution fail.

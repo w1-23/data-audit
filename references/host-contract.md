@@ -26,6 +26,8 @@ snapshot = review_sheet(
         "grim": [],
     },
     requested_checks=None,
+    reported_summaries=None,
+    reported_p_values=None,
     profile="balanced",
 )
 ```
@@ -48,6 +50,72 @@ not match the bytes currently authorized for that account/session.
 38 rules plus `pc_*` PaperConan-adapted checks and `geng_*` specialists.
 Friendly aliases are `duplicates`, `relations` and `outliers`. An explicit list
 does not silently add unrelated specialists.
+
+## Reported summaries and P values (3.2.0)
+
+Both lists are opt-in and use the same reviewed entries. Selectors use
+`region_id` (preferred) or `sheet`; rows are absolute 1-based sheet rows and
+columns are actual header names or absolute column numbers. There is no file
+index inside `review_sheet`: it reviews one source. Cross-file/cross-sheet
+comparison remains the explicit `compare_snapshots` API.
+
+Summary binding:
+
+```python
+reported_summaries=[{
+    "raw": {"region_id": "raw", "column": "value", "rows": [4, 5, 6, 7, 8]},
+    "reported": {"region_id": "summary", "row": 3,
+                 "columns": {"n": "n", "sum": "sum", "mean": "mean", "sd": "sd", "se": "se"}},
+    "decimals": {"sum": 0, "mean": 2, "sd": 3, "se": 3},
+    "sample_unit_confirmed": True,
+    "same_units_confirmed": True,
+    "sd_kind": "sample",
+}]
+```
+
+`missing_policy="exclude"` is required before silently dropping any missing raw
+cell; otherwise the binding is `not_applicable` with the excluded rows in the
+reason. `n` is exact; sum/mean/SD/SE are checked against the reported rounding
+interval. SE is compared only with sample SD (`sd_kind="sample"`).
+
+P-value binding from a reported statistic:
+
+```python
+reported_p_values=[{
+    "mode": "statistic", "distribution": "t", "df": 18, "tails": "two",
+    "statistic": {"region_id": "stats", "row": 12, "column": "t"},
+    "reported_p": {"region_id": "stats", "row": 12, "column": "p", "decimals": 3},
+    "location": {"region_id": "stats", "row": 12, "column": "p"},
+}]
+```
+
+P-value binding from raw samples (selectors or literal arrays):
+
+```python
+reported_p_values=[{
+    "mode": "samples", "test": "welch_t", "tails": "two",
+    "groups": [
+        {"region_id": "raw", "column": "value", "rows": [4, 5, 6, 7, 8]},
+        {"region_id": "raw", "column": "value", "rows": [9, 10, 11, 12, 13]},
+    ],
+    "reported_p": "P<0.05",
+}]
+```
+
+Supported distributions are `z`, `t`, `chi2` (requires a one-sided tail) and
+`f` (requires `df=[df1, df2]`). Supported sample tests are `welch_t`,
+`student_t`, `paired_t`, `one_way_anova`, `pearson` and `chi2_contingency`.
+`correction=True` applies Yates correction only to 2×2 contingency tables.
+`P<0.001` is tested as a strict inequality, never as an exact P of 0.001.
+For a declared comparison family, `audit_p_values(..., correction="holm"|"bh")`
+returns adjusted P values; `review_sheet` does not invent a correction family.
+
+The saved review includes `review.reported_stats.summaries.checks` and
+`review.reported_stats.p_values.checks`. Unresolved explicit bindings are added
+to `review.coverage_gaps` and make the review `partial`; a checked discrepancy is
+a finding and does not by itself mark execution as failed. Findings use the
+`reported_<metric>_differs_from_raw` or `reported_p_value_mismatch` check names
+and are exported through the same annotated workbook.
 
 ## Export
 
