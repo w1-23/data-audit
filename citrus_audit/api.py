@@ -138,7 +138,16 @@ def review_bytes(data: bytes, name: str, *, checks=None, sheet_name='', header_r
     return AuditSnapshot(data, name, dumps(report), report['source_sha256'])
 
 
-def export_workbook(snapshot: AuditSnapshot, **options):
+def export_workbook(snapshot: AuditSnapshot, *, presentation: str = 'annotated',
+                    explain_visible: bool = False, issue_list: bool = False,
+                    overview: bool = False, rules: bool = False):
+    """Render saved findings without rescanning the source.
+
+    ``annotated`` adds one visible review-result sheet and no debug appendices.
+    ``legacy`` keeps the pre-review export surface for old callers.
+    """
     from .workbook import export_snapshot
 
-    return export_snapshot(snapshot, **options)
+    return export_snapshot(snapshot, presentation=presentation,
+                           explain_visible=explain_visible, issue_list=issue_list,
+                           overview=overview, rules=rules)

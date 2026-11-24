@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "citrus-data-audit"
-version = "3.0.0"
+version = "3.2.0"
 description = "Coordinate-preserving data quality and numeric relationship checks"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE", "NOTICE.md"]
+license-files = ["LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2,<3",
@@ -25,7 +25,7 @@ test = ["pytest>=8.4,<9"]
 data-audit = "citrus_audit.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["citrus_audit"]
+include = ["citrus_audit*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

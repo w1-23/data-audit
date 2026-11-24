@@ -82,6 +82,12 @@ _KINDS: dict[str, tuple[str, str, str]] = {
     "unequal_replicates": ("重复数不一", "提示", "核对重复定义"),
     "integer_mean_inconsistent": ("均值不一致", "需核查", "核对数据粒度、舍入与 n 定义"),
     "integer_summary_inconsistent": ("统计量不一致", "需核查", "核对 SD 定义与舍入"),
+    "reported_n_differs_from_raw": ("样本量不一致", "需核查", "核对原始行范围、排除标准与重复定义"),
+    "reported_sum_differs_from_raw": ("合计不一致", "需核查", "核对参与合计的原始行、缺失与删除策略"),
+    "reported_mean_differs_from_raw": ("均值不一致", "需核查", "核对原始行范围、加权方式与舍入"),
+    "reported_sd_differs_from_raw": ("SD 不一致", "需核查", "确认样本/总体 SD 口径与原始行范围"),
+    "reported_se_differs_from_raw": ("SE 不一致", "需核查", "确认 SE=SD/sqrt(n) 及 SD 口径"),
+    "reported_p_value_mismatch": ("P 值不一致", "需核查", "核对检验设计、统计量、df、尾侧与报告精度"),
     "invalid_group_mapping": ("字段未匹配", "提示", "修正分组字段名后重跑"),
     "invalid_value_mapping": ("字段未匹配", "提示", "修正测量字段名后重跑"),
     "design_checks_skipped": ("未做分组检查", "提示", "如需分组检查，请说明分组列"),
@@ -94,6 +100,19 @@ _KINDS: dict[str, tuple[str, str, str]] = {
     "mixed_numeric_text": ("类型混杂", "需核查", "统一该列的数值格式，或把文本说明移到备注列"),
     # 按行标注路径的结论，不是规则命中：措辞必须让读者看出这是模型意见。
     "row_annotation": ("按行标注", "需核查", "该条为人工/模型注释，请对照原始记录与实验设计确认"),
+    "pc_identical_columns": ("列值完全重复（待核）", "需核查", "核对镜像列、派生列、合法复用或复制关系"),
+    "pc_constant_offset_columns": ("列间恒定差（待核）", "需核查", "核对公式、单位换算或复制关系"),
+    "pc_constant_ratio_columns": ("列间恒定比（待核）", "需核查", "核对比例换算、归一化或复制关系"),
+    "pc_identical_rows": ("数值行完全重复（待核）", "需核查", "核对合法重复测量、共享对照或复制关系"),
+    "pc_constant_offset_rows": ("行间恒定差（待核）", "需核查", "核对公式、单位或复制关系"),
+    "pc_constant_ratio_rows": ("行间恒定比（待核）", "需核查", "核对换算或复制关系"),
+    "pc_repeated_blocks": ("数值块重复（待核）", "需核查", "核对共享对照、导出重复或复制关系"),
+    "pc_shared_decimal_tail": ("尾数复用（待核）", "需核查", "先确认原始精度、仪器分辨率与舍入规则"),
+    "geng_last_digit": ("末位分布偏离（待核）", "需核查", "核对原始精度、量程和舍入；不是伪造判定"),
+    "geng_benford": ("首位分布偏离（待核）", "需核查", "仅在已确认适合本福特的自然跨数量级数据中解释"),
+    "geng_decimal_consistency": ("小数分布集中（待核）", "需核查", "核对格式化精度、仪器分辨率与真实舍入"),
+    "geng_grim": ("GRIM 不相容（待核）", "需核查", "核对报告精度、n、量程、加权均值或汇总错误"),
+    "special_token_undefined": ("特殊值待确认", "提示", "根据脚注或数据字典确认含义；不得自动转成 0 或缺失"),
 }
 
 def _kind(check: str) -> tuple[str, str, str]:
@@ -195,8 +214,10 @@ def _restore_original_cells(original, exported):
         return result.getvalue()
 
 
-def export_snapshot(snapshot, *, explain_visible=False, issue_list=False, overview=False, rules=False):
-    """Render saved findings on reviewed bytes. All appendices opt in."""
+def export_snapshot(snapshot, *, presentation='annotated', explain_visible=False, issue_list=False, overview=False, rules=False):
+    """Render saved findings on reviewed bytes. All debug appendices are opt-in."""
+    if presentation not in {'annotated', 'legacy'}:
+        raise ValueError('presentation must be annotated or legacy')
     if any(type(v)is not bool for v in (explain_visible,issue_list,overview,rules)):
         raise ValueError('Export switches must be boolean')
     if hashlib.sha256(snapshot.source_bytes).hexdigest()!=snapshot.source_sha256:
@@ -225,7 +246,8 @@ def export_snapshot(snapshot, *, explain_visible=False, issue_list=False, overvi
     return _render_workbook(wb, report['tables'], source_bytes=snapshot.source_bytes,
                             source_sha256=snapshot.source_sha256, status=report['status'],
                             original=suffix in {'.xlsx', '.xlsm'}, keep_vba=suffix == '.xlsm',
-                            explain_visible=explain_visible, issue_list=issue_list, overview=overview, rules=rules)
+                            explain_visible=explain_visible, issue_list=issue_list, overview=overview, rules=rules,
+                            presentation=presentation)
 
 
 def export_reviewed_workbook(data, *, targets, source_sha256, original=True,
@@ -243,10 +265,28 @@ def export_reviewed_workbook(data, *, targets, source_sha256, original=True,
 
 
 def finding_coordinates(item, columns):
-    """Return exact cells, with a scoped fallback for row-level issues."""
+    """Return exact cells, including bounded absolute evidence ranges."""
     evidence = item.get('evidence') or {}
     if 'cells' in evidence:
         return [(cell.get('row'), cell.get('column_index')) for cell in evidence['cells']]
+    ranges = evidence.get('ranges') or []
+    if ranges:
+        from openpyxl.utils.cell import range_boundaries
+        cells = []
+        for value in ranges[:20]:
+            text_value = str(value).split('!')[-1]
+            try:
+                left, top, right, bottom = range_boundaries(text_value)
+            except ValueError:
+                continue
+            if None in (left, top, right, bottom):
+                continue
+            if len(cells) + (right-left+1) * (bottom-top+1) > 20000:
+                break
+            cells.extend((row, column) for row in range(top, bottom+1)
+                         for column in range(left, right+1))
+        if cells:
+            return cells
     row, column = item.get('row'), item.get('column_index')
     if type(row) is int:
         return [(row, index) for index in ([column] if type(column) is int else columns)]
@@ -256,7 +296,8 @@ def finding_coordinates(item, columns):
 
 
 def _render_workbook(wb, entries, *, source_bytes, source_sha256, status, original,
-                     keep_vba=False, explain_visible=False, issue_list=False, overview=False, rules=False):
+                     keep_vba=False, explain_visible=False, issue_list=False, overview=False, rules=False,
+                     presentation='legacy'):
     original_names=list(wb.sheetnames)
     bounds={ws.title:(ws.max_row,ws.max_column) for ws in wb.worksheets}
     if sum(height*width for height,width in bounds.values()) > 2_000_000:
@@ -282,11 +323,12 @@ def _render_workbook(wb, entries, *, source_bytes, source_sha256, status, origin
             rows = set(rows)
         for original_item in entry['result']['data']['findings']:
             item = {**original_item, 'sheet': name, 'reviewed_columns': sorted(columns),
+                    'reviewed_header_row': header,
                     'columns': {int(number): title for number, title in zip(
                         table.get('column_numbers') or (), table.get('columns') or ())}}
             item.setdefault('region_id', table.get('region_id') or '')
             all_findings.append(item)
-            if item.get('coverage_only') or item.get('check') in COVERAGE_CHECKS:
+            if item.get('coverage_only') or item.get('mark_cell') is False or item.get('check') in COVERAGE_CHECKS:
                 continue
             coords = finding_coordinates(item, sorted(columns))
             for row, column in coords:
@@ -341,6 +383,61 @@ def _render_workbook(wb, entries, *, source_bytes, source_sha256, status, origin
         ws=wb.create_sheet(_unique_sheet_title(wb,name));added.append(ws.title)
         for r,values in enumerate([headers,*rows],start=1):
             for c,value in enumerate(values,start=1):put(ws,r,c,value)
+    summary_sheet = ''
+    summary_rows = 0
+    if presentation == 'annotated':
+        scope_parts = []
+        for entry in entries:
+            table = entry['table']
+            scope_parts.append(f"{table.get('sheet','')}!{table.get('region_bounds') or table.get('region_id') or 'selected range'}")
+        scope_text = '已审范围：' + '；'.join(scope_parts[:20])
+        if len(scope_parts) > 20:
+            scope_text += f'；另有 {len(scope_parts)-20} 个区域'
+        scope_text += f'。执行状态：{status}。未执行或覆盖不足的项目见报告。'
+        summary_sheet = _unique_sheet_title(wb, '审查结果')
+        ws = wb.create_sheet(summary_sheet)
+        added.append(summary_sheet)
+        put(ws, 1, 1, scope_text)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
+        for column, title in enumerate(('位置', '类型', '结论'), start=1):
+            put(ws, 2, column, title)
+        summary_rows = 0
+        reportable = sorted((x for x in all_findings if not x.get('coverage_only')), key=_sort)
+        for item in reportable:
+            ranges = list((item.get('evidence') or {}).get('ranges') or [])
+            coords = finding_coordinates(item, item.get('reviewed_columns') or ())
+            locations = []
+            for value in ranges:
+                text_value = str(value).strip()
+                if text_value:
+                    locations.append(f"{item.get('sheet','')}!{text_value}")
+            if not locations:
+                for r, c in coords[:40]:
+                    if type(r) is int and type(c) is int:
+                        locations.append(f"{item.get('sheet','')}!{get_column_letter(c)}{r}")
+            if not locations and type(item.get('column_index')) is int:
+                locations.append(f"{item.get('sheet','')}!{get_column_letter(item['column_index'])}{item.get('reviewed_header_row') or 1}")
+            location = ' ↔ '.join(dict.fromkeys(locations))[:1000]
+            label, _, action = _kind(str(item.get('check','')))
+            conclusion = ' '.join(str(item.get('detail','')).split())[:2000]
+            row_number = 3 + summary_rows
+            put(ws, row_number, 1, location or item.get('sheet', ''))
+            put(ws, row_number, 2, label)
+            put(ws, row_number, 3, conclusion)
+            if locations:
+                try:
+                    ws.cell(row_number, 1).hyperlink = f"#'{item.get('sheet','')}'!{locations[0].split('!',1)[-1]}"
+                except (ValueError, IndexError):
+                    pass
+            summary_rows += 1
+        if not summary_rows:
+            put(ws, 3, 1, '已审范围')
+            put(ws, 3, 2, '未发现异常')
+            put(ws, 3, 3, '在已执行的检查与已记录范围内未发现异常。')
+        ws.freeze_panes = 'A3'
+        ws.auto_filter.ref = f'A2:C{max(2, 2 + summary_rows)}'
+        for column, width in (('A', 32), ('B', 20), ('C', 96)):
+            ws.column_dimensions[column].width = width
     if issue_list:
         issue_rows=[]
         for index,x in enumerate(sorted(all_findings,key=lambda x:(x['sheet'],*_sort(x))),start=1):
@@ -389,6 +486,7 @@ def _render_workbook(wb, entries, *, source_bytes, source_sha256, status, origin
         reopened.close()
         wb.close()
     return blob,{'version':'2.0.0','source_sha256':source_sha256,'export_sha256':hashlib.sha256(blob).hexdigest(),
+        'presentation':presentation,'summary_sheet':summary_sheet,'summary_rows':summary_rows,
         'original_sheets':original_names,'added_sheets':added,'explanation_blocks':explanations,
         'original_data_sha256':before,'exported_data_sha256':after,'data_region_unchanged':True,
         'marked_locations':len(references),'marked_cells':len(marks),'findings_references':references,'scan_reused':True,

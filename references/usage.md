@@ -1,85 +1,138 @@
-# Inputs and CLI
+# Inputs and usage
 
-Install the package before using `scripts/audit.py`. The `catalog` command lists the 38 migrated table rules, four row extensions, eight cross-file integrity methods, and three bound comparison entries separately.
+## Default review
+
+The default path is one explicitly scoped review and one annotated source copy.
 
 ```sh
-data-audit inspect input.xlsx --sheet Measurements --output layout.json
-data-audit review input.xlsx --options review-options.json --snapshot reviewed.json \
-  --checks empty_table duplicate_row missing_cell non_numeric_cell out_of_range constant_offset_rows
-data-audit report reviewed.json --output full-report.json
-data-audit export reviewed.json --output annotated.xlsx --issue-list --overview --rules
+data-audit review-sheet input.xlsx --options review-options.json --snapshot reviewed.json
+data-audit export reviewed.json --output input_审查标注.xlsx
 ```
 
-A possible `review-options.json` for two regions of the same sheet is:
+A minimal options file for two regions is:
 
 ```json
 {
   "regions": [
-    {"sheet": "Measurements", "bounds": "D31:AC58", "header_rows": [31], "region_id": "batch-a"},
-    {"sheet": "Measurements", "bounds": "AF31:BE58", "header_rows": [31], "region_id": "batch-b"}
+    {"sheet": "Measurements", "bounds": "A3:Z25", "header_rows": [3], "region_id": "upper"},
+    {"sheet": "Measurements", "bounds": "A27:Z49", "header_rows": [27], "region_id": "lower"}
   ],
-  "required_fields": ["value"],
-  "values": ["value", "t1", "t2", "t3", "t4", "t5"],
-  "ranges": {"value": {"min": 0, "max": 100}},
-  "row_relationships": {
-    "columns": ["t1", "t2", "t3", "t4", "t5"],
-    "same_units_confirmed": true,
-    "absolute_tolerance": "0.0001",
-    "relative_tolerance": "0"
+  "field_roles": {
+    "sample_keys": ["sample_id"],
+    "group_columns": ["treatment"],
+    "value_columns": ["value", "response"],
+    "required_fields": ["sample_id", "value"],
+    "special_tokens": {"ND": "not_detected", "<LOD": "below_lod"}
   }
 }
 ```
 
-Run on the confirmed rectangles. `inspect` uses bounded XLSX/XLSM layout discovery and supplies hints, including regions without confirmed header rows. Explicit regions accept original A1 bounds and header rows anywhere in the supported sheet coordinates, including after row 24. The inherited whole-sheet `--header-row` path accepts rows 1–20. Region options apply to each selected table. CSV/TSV positions are logical records and fields. XLS/XLSB uses Calamine. Text DOCX and extractable PDF tables use logical table coordinates. Scans, OCR, and automatic rebuilding of complex document layouts are outside the table reader.
+`review-sheet` defaults to `--profile balanced`. Profiles are `balanced`,
+`duplicates`, `relations`, `numeric_forensics` and `custom`; `--checks` can
+select explicit rule names. Only requested/preconditioned checks run. The first
+reply is compact; the private snapshot keeps full findings and parsed values so
+export never rescans.
 
-- `groups` and `values` explicitly select grouping and measurements for `iqr_outlier`. Each group needs at least eight eligible values with positive IQR. An outlier is exploratory.
-- `key_columns`, `composite_keys`, `ranges`, `relations`, and `expected_structure` are declarations supplied by the user or data dictionary. See [the migration map](migration.md) and the synthetic test cases for parameter examples.
-- `pattern_checks` accepts `columns`, selected booleans such as `repeated_blocks`, `window` (3–100), and `order_confirmed`. The inherited `axis: "rows"` means down a column, and `axis: "columns"` means across a row. Across-row checks also require `same_units_confirmed`. Gaps interrupt windows in either direction.
-- `row_relationships` compares distinct rows over declared same-unit columns. It uses the shared exact rational transform implementation, requires at least five common finite columns and 80% common coverage, and caps the search at 5,000 pairs. A stronger selected match can suppress lower-priority relationship checks for a pair. The receipt explains that case. Algebraic `right = scale * left + offset` describes the comparison order.
-- OOXML reports give formula expression and cache status independently of the parsed values. The calculations use stored caches when present. A blank or missing cache remains unknown and its freshness is never inferred. Display formats do not establish measurement precision.
+## Annotated output
 
-## Saved results and comparison
+Default export writes the selected original sheets unchanged and adds one visible
+`审查结果` sheet with `位置 | 类型 | 结论`. Original values, formula expressions,
+cached values, merges and unreviewed sheets are retained. The position cell links
+to the first source location. A relation links both ranges and marks both sides;
+it does not invent which side was copied.
 
-`review` writes the source bytes, source SHA-256, full report, and canonical report SHA-256 into a private snapshot. `report` extracts the exact canonical report bytes. Table entries expose `columns`, `values`, `row_numbers` and `column_numbers` for subsequent analysis or chart input. Deserialized `TableEnvelope` objects provide `to_frame()` for local calculations.
-
-`compare` reads snapshots and a plan. An example for matching the same named measurements by declared unique sample IDs:
-
-```json
-{
-  "schema": "audit-plan/1",
-  "mode": "research_integrity",
-  "cross_file_methods": [],
-  "comparisons": [
-    {
-      "method": "sample_alignment",
-      "units": ["mg", "mg"],
-      "left": {"file_index": 0, "sheet": "Measurements", "region_id": "batch-a", "columns": ["value"], "key_columns": ["sample"]},
-      "right": {"file_index": 1, "sheet": "Measurements", "region_id": "batch-b", "columns": ["value"], "key_columns": ["sample"]}
-    }
-  ]
-}
-```
+Debug appendices are opt-in:
 
 ```sh
-data-audit compare left.json right.json --plan compare-plan.json --output comparisons.json
+data-audit export reviewed.json --output audit.xlsx --issue-list --overview --rules
 ```
 
-Use `cross_file_methods` for the eight declared searches over the provided snapshots. Compare entries bind their selections explicitly. Different units require a conversion factor. Use `region_id` or `region_bounds` to disambiguate multiple regions on one sheet. Duplicate and missing sample keys are excluded from matching, with counts retained. See `tests/plan_test.py` for finite-rectangle and window search bindings and their limits.
+Do not treat an issue list, rule catalogue, HTML page or snapshot JSON as the
+default user deliverable. A zero-finding workbook is still one annotated XLSX,
+with no false red marks.
+
+## Reading scope
+
+`inspect` supplies bounded layout hints. Explicit regions accept absolute A1
+bounds and header rows after row 24. The inherited whole-sheet `--header-row`
+path accepts rows 1–20. CSV/TSV positions are logical records and fields. XLS/XLSB
+uses Calamine. PDF/DOCX table positions are logical, not Excel cell coordinates.
+Formulas are evaluated from the saved cache only; the package never invents a
+fresh cache.
+
+## Checks and prerequisites
+
+- `balanced` batches basic structure/type/missing checks and PaperConan-adapted
+  exact column/row relations plus repeated blocks. ID, sample, group and replicate
+  columns are excluded from numeric relationship comparisons when roles are
+  declared.
+- `duplicates` activates whole-row duplicates and exact/block copy detectors only.
+- `relations` activates constant offset, constant ratio and exact identity in both
+  row and column directions. The equation's left/right order is comparison order,
+  not a claim about which side was copied.
+- `iqr_outlier` requires declared groups with at least eight eligible values and
+  positive IQR. It is exploratory, not an automatic deletion recommendation.
+- `geng_last_digit` and `geng_decimal_consistency` require confirmed literal
+  numeric tokens. `geng_benford` additionally requires a confirmed natural
+  cross-magnitude mechanism. `geng_grim` requires a row binding plus mean, n,
+  reported decimals and an explicit value range. All return review leads without
+  upstream risk scores. SPRITE and image duplication are not part of the locked
+  runtime; they remain explicit `NOT_RUN` capabilities.
+- A declared special token is retained and is not marked as a numeric error.
+  An undeclared `ND`, `<LOD`, `BLQ`, `NA`, `#N/A` or similar value is reported as
+  “meaning to confirm”; it is never silently converted to zero, missing or LOD/2.
+
+## Compatibility and snapshots
+
+The pre-3.1 `review` CLI/API, `review_bytes`, `audit_table`, snapshot schema
+`2.0.0`, old rule identifiers, compare methods and `presentation="legacy"` remain
+available for older hosts and saved reviews. A new task should use `review_sheet`
+once, not run the old and new orchestrators in sequence.
+
+The private snapshot includes source bytes for offline rendering and binds them
+to the source SHA and canonical report digest. If a host stores only the report,
+it must re-bind the currently authorized raw bytes only after verifying the saved
+source SHA. Snapshots detect accidental change; they are not signatures.
 
 ## Python
 
 ```python
-from pathlib import Path
-from citrus_audit import AuditSnapshot, export_workbook, review_bytes
-from citrus_audit.reporting import dumps, loads
+from citrus_audit import AuditSnapshot, export_workbook, review_sheet
 
-source = Path('input.csv')
-snapshot = review_bytes(source.read_bytes(), source.name, checks=['missing_cell', 'duplicate_row'])
-receipt = snapshot.compact()
-restored = AuditSnapshot.from_dict(loads(dumps(snapshot.to_dict())))
-annotated, export_receipt = export_workbook(restored, issue_list=True)
+snapshot = review_sheet(data, "input.xlsx", regions=regions, field_roles=roles)
+payload = snapshot.to_dict()                 # private JSON persistence
+restored = AuditSnapshot.from_dict(payload)
+blob, receipt = export_workbook(restored)    # one annotated XLSX
 ```
 
-`audit_table`, `review_bytes(...).report`, `compare_snapshots`, and the CLI use plain strict JSON values. At the local Python calculation layer, `TableEnvelope`, `IntegrityTable`, `AuditSnapshot`, and pandas frames retain typed information. Snapshots are trusted workspace files. Their digests detect accidental changes and are not signatures. Exports consume the saved findings and original bytes. XLSX/XLSM exports keep original cell values and caches. Other inputs are rendered as snapshot-derived XLSX. Comments and styles apply only to reviewed coordinates by default. XLSX export checks original cell data and merge integrity. Advanced third-party workbook objects are not covered by this guarantee.
+## Explicit reported summaries and P values
 
-CLI responses use `complete`, `partial`, or `error` for reviews, with individual rule state and coverage in the report. `--help` is human-readable. `error` exits with code 1. A partial receipt exits with code 0 and preserves available material. Files are written only to explicitly requested new paths. Full JSON excludes source Base64 except in the saved snapshot.
+```python
+snapshot = review_sheet(
+    data, "input.xlsx", regions=regions, field_roles=roles,
+    reported_summaries=[{
+        "raw": {"region_id": "raw", "column": "value", "rows": [4, 5, 6, 7, 8]},
+        "reported": {"region_id": "summary", "row": 3,
+                     "columns": {"n": "n", "sum": "sum", "mean": "mean", "sd": "sd", "se": "se"}},
+        "decimals": {"sum": 0, "mean": 2, "sd": 3, "se": 3},
+        "sample_unit_confirmed": True,
+        "same_units_confirmed": True,
+        "sd_kind": "sample",
+    }],
+    reported_p_values=[{
+        "mode": "statistic", "distribution": "t", "df": 18, "tails": "two",
+        "statistic": {"region_id": "stats", "row": 12, "column": "t"},
+        "reported_p": {"region_id": "stats", "row": 12, "column": "p", "decimals": 3},
+        "location": {"region_id": "stats", "row": 12, "column": "p"},
+    }],
+)
+```
+
+For raw-sample P values use `mode="samples"` and either literal `groups` or
+column selectors such as
+`{"region_id": "raw", "column": "value", "rows": [4, 5, 6, 7, 8]}`. Supported
+tests are `welch_t`, `student_t`, `paired_t`, `one_way_anova`, `pearson` and
+`chi2_contingency`; set `correction=True` only when Yates correction is the
+declared design. `P<0.001` and `P<=0.05` remain inequalities. Unresolved
+bindings are reported as coverage gaps and make the review `partial`; a real
+finding does not by itself make execution fail.

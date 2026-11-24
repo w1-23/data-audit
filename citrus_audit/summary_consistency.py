@@ -146,18 +146,19 @@ def compare_reported_summaries(tables, mappings: list[dict]) -> dict:
             if not valid:
                 raise ValueError("no finite raw observations")
             columns = binding.get("columns")
-            if not isinstance(columns, dict) or not columns or set(columns) - {"mean", "n", "sd", "se"}:
-                raise ValueError("columns maps n/mean/sd/se to actual reported column names")
+            if not isinstance(columns, dict) or not columns or set(columns) - {"mean", "n", "sd", "se", "sum"}:
+                raise ValueError("columns maps n/sum/mean/sd/se to actual reported column names")
             with localcontext() as context:
                 from fractions import Fraction
                 values = [raw.values[i][col] for i in valid]
                 count = len(values)
-                mean_fraction = sum(values, Fraction(0)) / count
+                total_fraction = sum(values, Fraction(0))
+                mean_fraction = total_fraction / count
                 # Center and accumulate exactly, then round only irrational SD/SE.
                 # Large baselines never erase small differences before variance.
                 context.prec = max(80, max(len(str(abs(v.numerator))) + len(str(v.denominator)) for v in values) * 2 + 40)
                 mean = Decimal(mean_fraction.numerator) / Decimal(mean_fraction.denominator)
-                expected = {'n': Decimal(count), 'mean': mean}
+                expected = {'n': Decimal(count), 'sum': Decimal(total_fraction.numerator) / Decimal(total_fraction.denominator), 'mean': mean}
                 if count >= 2:
                     variance = sum(((v-mean_fraction)**2 for v in values), Fraction(0)) / (count-1)
                     sd = (Decimal(variance.numerator) / Decimal(variance.denominator)).sqrt()
