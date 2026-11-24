@@ -10,7 +10,7 @@ from tempfile import NamedTemporaryFile
 from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile
 
-from . import AuditSnapshot, compare_snapshots, discover_regions, export_workbook, review_bytes, rule_manifest
+from . import AuditSnapshot, compare_snapshots, discover_regions, export_workbook, review_bytes, review_sheet, rule_manifest
 from .data_audit_rules import BASELINE_RULES
 from .integrity import METHODS
 from .plan import LEADS, QUALITY_DEFAULT
@@ -99,6 +99,16 @@ def _parser():
     review.add_argument('--options', type=Path, help='JSON rule parameters, header rows or explicit regions.')
     review.add_argument('--sheet', default='')
     review.add_argument('--header-row', type=int, default=1)
+    sheet_review = sub.add_parser('review-sheet')
+    sheet_review.add_argument('input', type=Path)
+    sheet_review.add_argument('--snapshot', type=Path, required=True)
+    sheet_review.add_argument('--options', type=Path, required=True,
+                              help='JSON containing regions and field_roles.')
+    sheet_review.add_argument('--checks', nargs='+')
+    sheet_review.add_argument('--profile', default='balanced',
+                              choices=['balanced', 'duplicates', 'relations', 'numeric_forensics', 'custom'])
+    sheet_review.add_argument('--sheet', default='')
+    sheet_review.add_argument('--header-row', type=int, default=1)
     report = sub.add_parser('report')
     report.add_argument('snapshot', type=Path)
     report.add_argument('--output', type=Path, required=True)
@@ -133,6 +143,24 @@ def _execute(args):
         payload = snapshot.to_dict()
         _write_json(args.snapshot, payload)
         return {**compact_report(payload['report']), 'snapshot_written': True, 'report_sha256': payload['report_sha256']}
+    if args.action == 'review-sheet':
+        options = _json(args.options)
+        if set(options) & {'data', 'name', 'sheet_name', 'header_row'}:
+            raise UserError('duplicate_options', 'Specify source, sheet and header only once.')
+        regions = options.pop('regions', None)
+        roles = options.pop('field_roles', options)
+        requested = options.pop('requested_checks', args.checks)
+        if options:
+            raise UserError('unknown_options', 'Only regions, field_roles and requested_checks are accepted.')
+        snapshot = review_sheet(_bounded_read(args.input, MAX_INPUT_BYTES), args.input.name,
+                                sheet_scope=args.sheet, regions=regions,
+                                field_roles=roles, requested_checks=requested,
+                                profile=args.profile, header_row=args.header_row)
+        payload = snapshot.to_dict()
+        _write_json(args.snapshot, payload)
+        return {**compact_report(payload['report']), 'snapshot_written': True,
+                'report_sha256': payload['report_sha256'],
+                'review_contract': payload['report']['review']['contract']}
     if args.action == 'compare':
         if not 1 <= len(args.snapshots) <= 20 or sum(path.stat().st_size for path in args.snapshots) > MAX_BATCH_SNAPSHOT_BYTES:
             raise UserError('batch_size_limit', 'Supply at most 20 snapshots and 512 MiB total.')

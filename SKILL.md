@@ -1,17 +1,16 @@
 ---
 name: data-audit
-description: Review supplied tables for data quality and numerical relationships, with original cell coordinates, explicit coverage, and an optional annotated workbook copy. Use for missing values, declared type or range violations, duplicate records, ordered patterns, group outliers, and explicitly scoped numeric comparisons.
+description: Review one explicitly scoped table or workbook region with deterministic checks, absolute source coordinates, an explicit coverage report, and one annotated XLSX. Use for missing values, declared type/range violations, duplicates, copy/transform relationships, group outliers, and scoped numerical checks.
 license: MIT
 compatibility: Python 3.11 or newer with the installed citrus-data-audit package and read access to the selected input files.
 ---
 
 # Data audit
 
-Use authorized code execution when the user asks to review the quality, structure, or numerical relationships of supplied tabular data. Work from the source bytes or reuse a saved review with the same source and scope. Read [the command and configuration examples](references/usage.md) when selecting an entry point.
+Work from the authorized source bytes or a saved review with the same source hash and scope.
 
-1. Identify the sheet, actual header rows, and data regions. In a workbook with multiple blocks, inspect the layout and confirm the absolute rectangles and headers to review. A bounded preview provides candidate regions. Record source SHA-256 and retain absolute rows and columns.
-2. Batch the inexpensive applicable checks. Use declared fields and bounds for type and range violations. Confirm the measurement order and comparability before checking row-wise patterns. Run design, group outlier, integer summary, or cross-source checks only when their prerequisites are available. Record which checks and regions were skipped and why.
-3. Report grouped findings with representative original coordinates and the checklist. Preserve the full findings, coverage, and parsed values in the report. Distinguish a declared constraint violation, a numerical relationship, and a question requiring source records or experimental context. Repeated measurements, scheduled gradients, shared controls, and formula-derived values can legitimately trigger rules. The calculations establish no inference about intent or misconduct.
-4. For a requested workbook, use the saved review to export one annotated copy of the original. Preserve source values, formulas, and cached values. Treat source bytes and the full snapshot as private input data. Share only the requested report or copy through the authorized output path.
+1. **Locate the actual table.** Identify the real sheet name, every requested block, absolute A1 bounds, header rows, measurement columns, ID/sample keys, grouping columns, summary columns, and any token legend. A preview is not the scan scope. Use explicit regions for a workbook with upper/lower or side-by-side blocks.
+2. **Run one bounded review.** Call `review_sheet(...)` with the confirmed regions and field roles. The default `balanced` profile batches applicable basic checks and PaperConan-adapted exact copy/transform checks once. Advanced Geng checks require their explicit preconditions. Do not first write an ad-hoc implementation and then run the package again.
+3. **Return one artifact.** A normal table review publishes one `<original>_审查标注.xlsx`. Preserve original values, formulas, caches, merges and unreviewed areas. Add one visible `审查结果` sheet with `位置 | 类型 | 结论`, and mark cells/ranges with comments or red borders. A zero-finding review uses the same workbook and has no invented red marks.
 
-Stop once the requested scope has a receipt and available findings. If a missing scientific assumption materially changes the requested conclusion, ask for it after completing independent checks. If a parse limit or missing cache leaves part of the data unreviewed, report the gap and resume only with a narrower selection or additional evidence. A zero-finding result applies to the checks and positions actually evaluated.
+Stop when the requested scope has been processed and reported. If a scientific prerequisite is missing, finish the applicable checks and record that item as not applicable/not run. Do not request another full scan merely to eliminate uncertainty. Printed or debug JSON and the private snapshot are not the default user deliverable. A relation or distribution deviation is a review lead, not proof of misconduct.

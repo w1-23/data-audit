@@ -1,7 +1,8 @@
 """Independent Citrus data audit support library."""
-__version__ = '3.0.0'
+__version__ = '3.1.0'
 from .envelope import TableEnvelope
 from .api import AuditSnapshot, audit_table, review_bytes, export_workbook
+from .review import review_sheet
 from .readers import read_table, read_tables, read_region, read_regions, normalize_regions
 from .methods import audit_frame, audit_selected_checks, audit_duplicates, audit_group_outliers
 from .data_audit_rules import RULES, describe_rule, rule_manifest
