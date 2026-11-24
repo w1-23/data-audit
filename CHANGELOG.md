@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.1
+
+- Reuse the PaperConan exact relation classifier in explicitly bound cross-sheet and cross-file snapshot comparisons. Preserve original coordinates, known-unit conversion, and the achieved key coverage.
+- Skip unselected relation checks and report partial coverage when the row pair budget is exhausted.
+
 ## 3.2.0
 
 - Add `reported_summaries=` and `reported_p_values=` to `review_sheet`, using explicit `region_id`/`sheet` + absolute row/column bindings.

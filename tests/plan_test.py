@@ -140,3 +140,48 @@ def test_existing_sample_alignment_contract_is_preserved():
     assert receipt["status"] == "complete"
     assert receipt["coverage"]["matched_unique_keys"] == 3
     assert receipt["evidence"]["cells_differing"] == 1
+
+
+@pytest.mark.parametrize(("right_values", "relation", "constant"), [
+    ([7, 2, 13, 4], "identical", None),
+    ([17, 12, 23, 14], "constant_offset", "10"),
+    ([21, 6, 39, 12], "constant_ratio", "3"),
+    ([7, 2, 13.00001, 4], None, None),
+    ([9, 9, 9, 9], None, None),
+])
+def test_aligned_relations_keep_original_positions(right_values, relation, constant):
+    binding = {
+        "method": "sample_alignment", "numeric_relations": True,
+        "left": {"file_index": 0, "sheet": "First", "columns": ["x"], "key_columns": ["id"]},
+        "right": {"file_index": 1, "sheet": "Second", "columns": ["y"], "key_columns": ["code"]},
+        "units": ["mg", "mg"],
+    }
+    left = table_from_rows([[2], [4], [7], [13]], ["x"], source_id="0",
+                           source_name="first.xlsx", source_bytes=b"first", sheet="First",
+                           row_numbers=[5, 6, 8, 9], column_numbers=[3])
+    right = table_from_rows([[value] for value in right_values], ["y"], source_id="1",
+                            source_name="second.xlsx", source_bytes=b"second", sheet="Second",
+                            row_numbers=[10, 11, 15, 17], column_numbers=[5])
+    index = {(0, "First"): (left, {("id",): ({(key,): index for index, key in enumerate("abcd")}, 0)}),
+             (1, "Second"): (right, {("code",): ({(key,): index for index, key in enumerate("cadb")}, 0)})}
+    receipt = compare_bound(_plan(binding), index)[0]
+    result = receipt["evidence"]["numeric_relations"][0]
+    assert result["relation"] == relation
+    assert result.get("constant") == constant
+    assert result["coverage"] == {"finite_pairs": 4, "candidate_keys_or_rows": 4}
+    assert result["state"] == ("checked_with_findings" if relation else "checked_no_findings")
+    if relation:
+        assert result["representative_pairs"][0]["left_row"] == 5
+        assert result["representative_pairs"][0]["right_row"] == 11
+        assert result["representative_pairs"][0]["left"] == "2"
+        assert result["locations"][0]["cells"][0] == ["C5"]
+        assert result["locations"][1]["cells"][0] == ["E11"]
+
+    legacy = compare_bound(_plan({**binding, "numeric_relations": False}), index)[0]
+    assert "numeric_relations" not in legacy["evidence"]
+    index[(1, "Second")][1][("code",)] = ({("c",): 0, ("a",): 1, ("d",): 2}, 1)
+    receipt = compare_bound(_plan(binding), index)[0]
+    result = receipt["evidence"]["numeric_relations"][0]
+    assert result["state"] == "not_applicable"
+    assert result["relation"] is None
+    assert result["coverage"] == {"finite_pairs": 3, "candidate_keys_or_rows": 5}
