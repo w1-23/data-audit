@@ -3,7 +3,10 @@ import io
 import unittest
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.comments import Comment
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 from citrus_audit.inspection import discover_regions
 from citrus_audit.readers import normalize_regions, read_region
@@ -25,6 +28,39 @@ def _source():
 
 
 class RegionWorkbookTest(unittest.TestCase):
+    def test_export_preserves_rich_runs_and_formula_cells(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(['label', 'array', 'table'])
+        sheet['A2'] = CellRichText('sample ', TextBlock(InlineFont(b=True), 'one'))
+        sheet['B2'] = ArrayFormula('B2:B3', '=D2:D3*2')
+        sheet['C2'] = DataTableFormula('C2:C3', r1='D2', dt2D=True)
+        stream = io.BytesIO()
+        workbook.save(stream)
+        data = stream.getvalue()
+        target = {'sheet_name': sheet.title, 'header_row': 1,
+                  'column_numbers': [1, 2, 3], 'row_numbers': [2, 3],
+                  'findings': [{'check': 'row_annotation', 'row': 2,
+                                'column_index': 1, 'detail': 'review'}]}
+
+        blob, stats = export_reviewed_workbook(data, targets=[target],
+                                               source_sha256=hashlib.sha256(data).hexdigest(),
+                                               issue_list=True)
+
+        exported = load_workbook(io.BytesIO(blob), rich_text=True)
+        try:
+            copied = exported[sheet.title]
+            self.assertEqual(copied['A2'].value, sheet['A2'].value)
+            self.assertTrue(copied['A2'].value[1].font.b)
+            self.assertEqual(copied['B2'].value.text, sheet['B2'].value.text)
+            self.assertEqual(dict(copied['B2'].value), dict(sheet['B2'].value))
+            self.assertEqual(dict(copied['C2'].value), dict(sheet['C2'].value))
+            self.assertIsNotNone(copied['A2'].comment)
+            self.assertEqual(exported['问题清单']['D2'].value, 'A2')
+        finally:
+            exported.close()
+        self.assertTrue(stats['data_region_unchanged'])
+
     def test_small_sheet_scan_includes_second_block_beyond_preview(self):
         workbook = Workbook()
         sheet = workbook.active

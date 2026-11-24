@@ -16,6 +16,11 @@ def _json_default(value):
         return float(value) if value.is_finite() else str(value)
     if isinstance(value, bytes):
         return base64.b64encode(value).decode("ascii")
+    if isinstance(value, TextBlock):
+        return {"rich_text_run": tostring(value.to_tree()).decode("utf-8")}
+    if isinstance(value, (ArrayFormula, DataTableFormula)):
+        return {"formula_type": type(value).__name__, "attributes": dict(value),
+                "formula": getattr(value, "text", None)}
     if isinstance(value, (set, frozenset)):
         return sorted(value, key=lambda item: repr(item))
     if hasattr(value, "tolist"):
@@ -31,7 +36,10 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Border, PatternFill, Side
 from openpyxl.cell.cell import MergedCell
+from openpyxl.cell.rich_text import TextBlock
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
+from openpyxl.xml.functions import tostring
 from .methods import COVERAGE_CHECKS
 def _unique_sheet_title(wb, desired: str) -> str:
     """Choose a workbook metadata title without replacing an uploaded sheet."""
